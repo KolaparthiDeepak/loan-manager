@@ -1,0 +1,29 @@
+# Secrets
+**/.env
+*.env
+
+# Flutter / Dart
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+**/doc/api/
+
+# Android / iOS build noise
+android/.gradle/
+android/app/debug/
+android/app/profile/
+android/app/release/
+ios/Pods/
+ios/.symlinks/
+
+# Node (tools)
+tools/node_modules/
+
+# IDE
+.idea/
+.vscode/
+*.iml
