@@ -78,4 +78,16 @@ void main() {
       expect(run(6.5, 'KEEP_EMI').newYears, 11.6);
     });
   });
+
+  // getEmiSchedule with the CURRENT engine (round2 = whole rupees).
+  test('getEmiSchedule parity (9000000 @ 7.3% / 15 yr)', () {
+    final s = getEmiSchedule(9000000, 7.3, 15);
+    expect(s.length, 180);
+    expect(s.first.emi, 82412);
+    expect(s.first.principal, 27662);
+    expect(s.first.interest, 54750);
+    expect(s.first.balance, 8972338);
+    expect(s.last.balance, 0);
+    expect(s.last.interest, 497);
+  });
 }

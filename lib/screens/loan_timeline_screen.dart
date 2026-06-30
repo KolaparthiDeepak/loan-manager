@@ -4,6 +4,7 @@ import '../loan_engine.dart';
 import '../models.dart';
 import '../supabase_service.dart';
 import '../utils.dart';
+import 'schedule_screen.dart';
 
 class LoanTimelineScreen extends StatefulWidget {
   final String loanId;
@@ -165,6 +166,17 @@ class _LoanTimelineScreenState extends State<LoanTimelineScreen> {
         backgroundColor: const Color(0xFF1976d2),
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.table_chart_outlined),
+            tooltip: 'Amortization schedule',
+            onPressed: _loan == null
+                ? null
+                : () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => ScheduleScreen(loan: _loan!)),
+                    ),
+          ),
           IconButton(
             icon: const Icon(Icons.percent),
             tooltip: 'Change interest rate',
