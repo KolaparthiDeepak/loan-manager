@@ -151,6 +151,10 @@ class TimelineRow {
   final double totalOutstanding;
   final int? sourceMonth;
   final String? note;
+  // For delete support: the DB row this timeline entry came from.
+  // null on ACCRUAL rows (synthetic, not deletable).
+  final String? transactionId;
+  final String? transactionKind; // 'disbursement' | 'payment'
   TimelineRow({
     required this.date,
     required this.eventType,
@@ -164,6 +168,8 @@ class TimelineRow {
     required this.totalOutstanding,
     this.sourceMonth,
     this.note,
+    this.transactionId,
+    this.transactionKind,
   });
 }
 
@@ -210,7 +216,10 @@ class _Event {
   final double amount;
   final int? sourceMonth;
   final int seq; // insertion order tiebreaker -> matches V8 stable sort
-  _Event(this.type, this.date, this.amount, this.sourceMonth, this.seq);
+  final String txId;
+  final String txKind; // 'disbursement' | 'payment'
+  _Event(this.type, this.date, this.amount, this.sourceMonth, this.seq,
+      this.txId, this.txKind);
 }
 
 double _min(double a, double b) => a < b ? a : b;
@@ -225,11 +234,13 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
   var seq = 0;
   final events = <_Event>[];
   for (final d in loan.disbursements) {
-    events.add(_Event('DISBURSEMENT', d.date, d.amount, null, seq++));
+    events.add(_Event(
+        'DISBURSEMENT', d.date, d.amount, null, seq++, d.id, 'disbursement'));
   }
   for (final p in loan.payments) {
     final type = p.paymentType == 'PREPAYMENT' ? 'PREPAYMENT' : 'EMI_PAYMENT';
-    events.add(_Event(type, p.date, p.amount, p.sourceMonth, seq++));
+    events.add(
+        _Event(type, p.date, p.amount, p.sourceMonth, seq++, p.id, 'payment'));
   }
 
   events.removeWhere((e) => e.date.isEmpty || e.amount <= 0);
@@ -271,6 +282,8 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
         outstandingPrincipal: outstandingPrincipal,
         accruedInterest: accruedInterest,
         totalOutstanding: round2(outstandingPrincipal + accruedInterest),
+        transactionId: event.txId,
+        transactionKind: event.txKind,
       ));
     } else if (event.type == 'PREPAYMENT') {
       if (periodInterest > 0) {
@@ -303,6 +316,8 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
         sourceMonth: event.sourceMonth,
         note:
             'Floating-rate prepayment — 100% principal reduction, no interest/penalty',
+        transactionId: event.txId,
+        transactionKind: event.txKind,
       ));
     } else {
       interestPaid = round2(_min(event.amount, accruedInterest));
@@ -324,6 +339,8 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
         accruedInterest: accruedInterest,
         totalOutstanding: round2(outstandingPrincipal + accruedInterest),
         sourceMonth: event.sourceMonth,
+        transactionId: event.txId,
+        transactionKind: event.txKind,
       ));
     }
     cursorDate = eventDate;
@@ -432,4 +449,59 @@ _SimResult _simulateLoan(double principal, double emi, double rate,
     month++;
   }
   return _SimResult(round2(totalInterest), month - 1);
+}
+
+// ---- floating-rate change (port of PATCH /:loanId/rate) --------------------
+class RateChangeException implements Exception {
+  final String message;
+  RateChangeException(this.message);
+  @override
+  String toString() => message;
+}
+
+class RateChangeResult {
+  final double newRate;
+  final double newYears;
+  final double newMonthlyEmi;
+  RateChangeResult(this.newRate, this.newYears, this.newMonthlyEmi);
+}
+
+/// Faithful port of the rate-update logic.
+///   KEEP_TENURE: keep years, recompute EMI.
+///   KEEP_EMI:    keep EMI, recompute tenure (years).
+/// [outstandingPrincipal] MUST be computed from the CURRENT (old) rate via
+/// buildTimeline before calling — exactly as the web backend did.
+RateChangeResult applyRateChange({
+  required double outstandingPrincipal,
+  required double oldEmi,
+  required double sanctionedAmount,
+  required double currentYears,
+  required double newRateInput,
+  required String adjustmentType, // 'KEEP_EMI' | 'KEEP_TENURE'
+}) {
+  if (newRateInput <= 0 || newRateInput > 50) {
+    throw RateChangeException('Invalid interest rate. Must be between 0 and 50%');
+  }
+  if (adjustmentType != 'KEEP_EMI' && adjustmentType != 'KEEP_TENURE') {
+    throw RateChangeException('Invalid adjustmentType');
+  }
+  final newRate = round2(newRateInput * 100) / 100; // 2-decimal precision
+  final monthlyRate = newRate / (12 * 100);
+
+  if (adjustmentType == 'KEEP_EMI') {
+    final currentEmi = oldEmi;
+    if (currentEmi <= outstandingPrincipal * monthlyRate) {
+      throw RateChangeException(
+          'EMI is too low to cover interest at new rate. Please choose "Increase EMI".');
+    }
+    final newTenureMonths = (-math.log(
+                1 - (outstandingPrincipal * monthlyRate) / currentEmi) /
+            math.log(1 + monthlyRate))
+        .ceil();
+    final newYears = (newTenureMonths / 12 * 10).ceil() / 10; // 1-decimal
+    return RateChangeResult(newRate, newYears.toDouble(), currentEmi);
+  } else {
+    final newEmi = round2(calculateEmi(sanctionedAmount, newRate, currentYears));
+    return RateChangeResult(newRate, currentYears, newEmi);
+  }
 }

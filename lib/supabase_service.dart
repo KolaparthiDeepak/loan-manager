@@ -87,6 +87,33 @@ class SupabaseService {
     await _c.from('loans').delete().eq('id', id);
   }
 
+  /// Mirrors PATCH /api/loans/:id/rate. Computes outstanding principal from the
+  /// CURRENT (old) rate, then applies the new rate keeping EMI or tenure.
+  static Future<RateChangeResult> updateRate({
+    required Loan loan,
+    required double newRate,
+    required String adjustmentType, // 'KEEP_EMI' | 'KEEP_TENURE'
+  }) async {
+    final tl = loan.timeline(); // uses old rate
+    final outstanding = tl.outstandingPrincipal != 0
+        ? tl.outstandingPrincipal
+        : loan.sanctionedAmount;
+    final result = applyRateChange(
+      outstandingPrincipal: outstanding,
+      oldEmi: loan.monthlyEmi,
+      sanctionedAmount: loan.sanctionedAmount,
+      currentYears: loan.years,
+      newRateInput: newRate,
+      adjustmentType: adjustmentType,
+    );
+    await _c.from('loans').update({
+      'rate': result.newRate,
+      'years': result.newYears,
+      'monthly_emi': result.newMonthlyEmi,
+    }).eq('id', loan.id);
+    return result;
+  }
+
   // ---- transactions --------------------------------------------------------
   static Future<void> addDisbursement({
     required String loanId,

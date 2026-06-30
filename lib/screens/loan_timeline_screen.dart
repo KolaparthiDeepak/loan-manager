@@ -73,6 +73,68 @@ class _LoanTimelineScreenState extends State<LoanTimelineScreen> {
     }
   }
 
+  Future<void> _changeRate() async {
+    final loan = _loan!;
+    final result = await showDialog<_RateChoice>(
+      context: context,
+      builder: (_) => _RateChangeDialog(currentRate: loan.rate),
+    );
+    if (result == null) return;
+    try {
+      final r = await SupabaseService.updateRate(
+        loan: loan,
+        newRate: result.newRate,
+        adjustmentType: result.adjustmentType,
+      );
+      await _fetch();
+      if (mounted) {
+        final what = result.adjustmentType == 'KEEP_EMI'
+            ? 'EMI kept, tenure → ${r.newYears} yr'
+            : 'Tenure kept, EMI → ${inr(r.newMonthlyEmi)}';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Rate updated to ${r.newRate}%. $what')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  Future<void> _deleteRow(TimelineRow row) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete transaction?'),
+        content: Text(
+            '${eventLabel(row.eventType)} of ${inr(row.amount)} on ${row.date}'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel')),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    try {
+      if (row.transactionKind == 'disbursement') {
+        await SupabaseService.deleteDisbursement(row.transactionId!);
+      } else {
+        await SupabaseService.deletePayment(row.transactionId!);
+      }
+      await _fetch();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Failed: $e')));
+      }
+    }
+  }
+
   Future<void> _confirmDeleteLoan() async {
     final ok = await showDialog<bool>(
       context: context,
@@ -103,6 +165,11 @@ class _LoanTimelineScreenState extends State<LoanTimelineScreen> {
         backgroundColor: const Color(0xFF1976d2),
         foregroundColor: Colors.white,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.percent),
+            tooltip: 'Change interest rate',
+            onPressed: _loan == null ? null : _changeRate,
+          ),
           IconButton(
             icon: const Icon(Icons.delete_outline),
             tooltip: 'Delete loan',
@@ -276,6 +343,7 @@ class _LoanTimelineScreenState extends State<LoanTimelineScreen> {
                 DataColumn(label: Text('Principal')),
                 DataColumn(label: Text('Outstanding')),
                 DataColumn(label: Text('Total Owed')),
+                DataColumn(label: Text('')),
               ],
               rows: v.timeline.map((r) {
                 return DataRow(
@@ -293,6 +361,13 @@ class _LoanTimelineScreenState extends State<LoanTimelineScreen> {
                         : inr(r.principalPaid))),
                     DataCell(Text(inr(r.outstandingPrincipal))),
                     DataCell(Text(inr(r.totalOutstanding))),
+                    DataCell(r.transactionId == null
+                        ? const SizedBox.shrink()
+                        : IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                            tooltip: 'Delete',
+                            onPressed: () => _deleteRow(r),
+                          )),
                   ],
                 );
               }).toList(),
@@ -397,6 +472,85 @@ class _AddTransactionSheetState extends State<_AddTransactionSheet> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _RateChoice {
+  final double newRate;
+  final String adjustmentType; // KEEP_EMI | KEEP_TENURE
+  _RateChoice(this.newRate, this.adjustmentType);
+}
+
+class _RateChangeDialog extends StatefulWidget {
+  final double currentRate;
+  const _RateChangeDialog({required this.currentRate});
+
+  @override
+  State<_RateChangeDialog> createState() => _RateChangeDialogState();
+}
+
+class _RateChangeDialogState extends State<_RateChangeDialog> {
+  late final TextEditingController _rate =
+      TextEditingController(text: widget.currentRate.toString());
+  String _mode = 'KEEP_TENURE';
+  String? _error;
+
+  @override
+  void dispose() {
+    _rate.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Change interest rate'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _rate,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+                labelText: 'New rate (% p.a.)', border: OutlineInputBorder()),
+          ),
+          const SizedBox(height: 12),
+          RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            value: 'KEEP_TENURE',
+            groupValue: _mode,
+            onChanged: (v) => setState(() => _mode = v!),
+            title: const Text('Keep tenure (recalculate EMI)'),
+          ),
+          RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            value: 'KEEP_EMI',
+            groupValue: _mode,
+            onChanged: (v) => setState(() => _mode = v!),
+            title: const Text('Keep EMI (recalculate tenure)'),
+          ),
+          if (_error != null)
+            Text(_error!, style: const TextStyle(color: Colors.red)),
+        ],
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel')),
+        FilledButton(
+          onPressed: () {
+            final r = double.tryParse(_rate.text);
+            if (r == null || r <= 0 || r > 50) {
+              setState(() => _error = 'Enter a rate between 0 and 50');
+              return;
+            }
+            Navigator.pop(context, _RateChoice(r, _mode));
+          },
+          child: const Text('Apply'),
+        ),
+      ],
     );
   }
 }

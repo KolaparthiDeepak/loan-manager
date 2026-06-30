@@ -47,4 +47,35 @@ void main() {
     expect(v.monthlyEmi, 82412); // round2(82411.53)
     expect(v.nextDueDate, '2026-07-05');
   });
+
+  // Golden values from the web app's rate formulas (outstanding 8031059,
+  // oldEmi 82412, sanctioned 9000000, years 15).
+  group('applyRateChange parity', () {
+    RateChangeResult run(double rate, String mode) => applyRateChange(
+          outstandingPrincipal: 8031059,
+          oldEmi: 82412,
+          sanctionedAmount: 9000000,
+          currentYears: 15,
+          newRateInput: rate,
+          adjustmentType: mode,
+        );
+
+    test('rate 8% KEEP_TENURE -> EMI 86009', () {
+      final r = run(8.0, 'KEEP_TENURE');
+      expect(r.newRate, 8.0);
+      expect(r.newYears, 15);
+      expect(r.newMonthlyEmi, 86009);
+    });
+    test('rate 8% KEEP_EMI -> 13.2 yr', () {
+      final r = run(8.0, 'KEEP_EMI');
+      expect(r.newMonthlyEmi, 82412);
+      expect(r.newYears, 13.2);
+    });
+    test('rate 6.5% KEEP_TENURE -> EMI 78400', () {
+      expect(run(6.5, 'KEEP_TENURE').newMonthlyEmi, 78400);
+    });
+    test('rate 6.5% KEEP_EMI -> 11.6 yr', () {
+      expect(run(6.5, 'KEEP_EMI').newYears, 11.6);
+    });
+  });
 }
