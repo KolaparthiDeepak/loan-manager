@@ -17,8 +17,8 @@ class SupabaseService {
     await _c.auth.signInWithPassword(email: email, password: password);
   }
 
-  static Future<void> signUp(String email, String password) async {
-    await _c.auth.signUp(email: email, password: password);
+  static Future<AuthResponse> signUp(String email, String password) {
+    return _c.auth.signUp(email: email, password: password);
   }
 
   static Future<void> signOut() => _c.auth.signOut();
