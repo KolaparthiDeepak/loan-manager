@@ -4,7 +4,10 @@ import '../loan_engine.dart';
 import '../models.dart';
 import '../supabase_service.dart';
 import '../utils.dart';
+import '../export_csv.dart';
+import '../widgets/balance_chart.dart';
 import 'schedule_screen.dart';
+import 'whatif_screen.dart';
 
 class LoanTimelineScreen extends StatefulWidget {
   final String loanId;
@@ -187,6 +190,31 @@ class _LoanTimelineScreenState extends State<LoanTimelineScreen> {
             tooltip: 'Delete loan',
             onPressed: _loan == null ? null : _confirmDeleteLoan,
           ),
+          PopupMenuButton<String>(
+            onSelected: (v) {
+              if (_loan == null) return;
+              if (v == 'whatif') {
+                Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => WhatIfScreen(loan: _loan!)));
+              } else if (v == 'csv') {
+                exportTimelineCsv(_loan!.loanName, _view!);
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                  value: 'whatif',
+                  child: ListTile(
+                      leading: Icon(Icons.insights),
+                      title: Text('Prepayment what-if'))),
+              PopupMenuItem(
+                  value: 'csv',
+                  child: ListTile(
+                      leading: Icon(Icons.ios_share),
+                      title: Text('Export CSV'))),
+            ],
+          ),
         ],
       ),
       body: _loading
@@ -201,6 +229,8 @@ class _LoanTimelineScreenState extends State<LoanTimelineScreen> {
                       _statsGrid(_view!),
                       const SizedBox(height: 8),
                       if (_view!.interestSaved > 0) _savingsCards(_view!),
+                      const SizedBox(height: 8),
+                      BalanceChart(view: _view!),
                       const SizedBox(height: 8),
                       _actionButtons(),
                       const SizedBox(height: 8),

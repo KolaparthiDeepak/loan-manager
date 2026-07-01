@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'config.dart';
 import 'loan_engine.dart';
 import 'models.dart';
 
@@ -13,12 +14,20 @@ class SupabaseService {
   static Session? get session => _c.auth.currentSession;
   static User? get currentUser => _c.auth.currentUser;
 
-  static Future<void> signIn(String email, String password) async {
-    await _c.auth.signInWithPassword(email: email, password: password);
+  /// Sign in with a username (mapped to a synthetic email internally).
+  static Future<void> signIn(String username, String password) async {
+    await _c.auth.signInWithPassword(
+        email: usernameToEmail(username), password: password);
   }
 
-  static Future<AuthResponse> signUp(String email, String password) {
-    return _c.auth.signUp(email: email, password: password);
+  /// Register a username (mapped to a synthetic email). Stores the raw username
+  /// in user metadata for display.
+  static Future<AuthResponse> signUp(String username, String password) {
+    return _c.auth.signUp(
+      email: usernameToEmail(username),
+      password: password,
+      data: {'username': username.trim()},
+    );
   }
 
   static Future<void> signOut() => _c.auth.signOut();

@@ -85,17 +85,80 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               );
             }
+            final showSummary = loans.length > 1;
             return ListView.builder(
               padding: const EdgeInsets.all(12),
-              itemCount: loans.length,
-              itemBuilder: (context, i) => _LoanCard(
-                loan: loans[i],
-                onTap: () => _openTimeline(loans[i]),
-              ),
+              itemCount: loans.length + (showSummary ? 1 : 0),
+              itemBuilder: (context, i) {
+                if (showSummary && i == 0) {
+                  return _SummaryHeader(loans: loans);
+                }
+                final loan = loans[i - (showSummary ? 1 : 0)];
+                return _LoanCard(
+                  loan: loan,
+                  onTap: () => _openTimeline(loan),
+                );
+              },
             );
           },
         ),
       ),
+    );
+  }
+}
+
+class _SummaryHeader extends StatelessWidget {
+  final List<Loan> loans;
+  const _SummaryHeader({required this.loans});
+
+  @override
+  Widget build(BuildContext context) {
+    double outstanding = 0, emi = 0, saved = 0, sanctioned = 0;
+    for (final l in loans) {
+      final t = l.timeline();
+      outstanding += t.totalOutstanding;
+      emi += t.monthlyEmi;
+      saved += t.interestSaved;
+      sanctioned += t.sanctionedAmount;
+    }
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+            colors: [Color(0xFF1E88E5), Color(0xFF1565C0)]),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${loans.length} loans',
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 20,
+            runSpacing: 12,
+            children: [
+              _item('Total Outstanding', inr(outstanding)),
+              _item('Monthly EMI', inr(emi)),
+              _item('Interest Saved', inr(saved)),
+              _item('Total Sanctioned', inr(sanctioned)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _item(String label, String value) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
+      ],
     );
   }
 }
