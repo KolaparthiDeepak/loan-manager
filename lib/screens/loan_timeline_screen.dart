@@ -185,21 +185,22 @@ class _LoanTimelineScreenState extends State<LoanTimelineScreen> {
             tooltip: 'Change interest rate',
             onPressed: _loan == null ? null : _changeRate,
           ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Delete loan',
-            onPressed: _loan == null ? null : _confirmDeleteLoan,
-          ),
           PopupMenuButton<String>(
             onSelected: (v) {
               if (_loan == null) return;
-              if (v == 'whatif') {
-                Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                        builder: (_) => WhatIfScreen(loan: _loan!)));
-              } else if (v == 'csv') {
-                exportTimelineCsv(_loan!.loanName, _view!);
+              switch (v) {
+                case 'whatif':
+                  Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => WhatIfScreen(loan: _loan!)));
+                  break;
+                case 'csv':
+                  exportTimelineCsv(_loan!.loanName, _view!);
+                  break;
+                case 'delete':
+                  _confirmDeleteLoan();
+                  break;
               }
             },
             itemBuilder: (_) => const [
@@ -213,6 +214,11 @@ class _LoanTimelineScreenState extends State<LoanTimelineScreen> {
                   child: ListTile(
                       leading: Icon(Icons.ios_share),
                       title: Text('Export CSV'))),
+              PopupMenuItem(
+                  value: 'delete',
+                  child: ListTile(
+                      leading: Icon(Icons.delete_outline),
+                      title: Text('Delete loan'))),
             ],
           ),
         ],

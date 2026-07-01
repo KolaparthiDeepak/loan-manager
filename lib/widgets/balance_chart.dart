@@ -35,6 +35,7 @@ class BalanceChart extends StatelessWidget {
                 style: TextStyle(fontSize: 11, color: Colors.black54)),
             const SizedBox(height: 16),
             SizedBox(
+              width: double.infinity,
               height: 200,
               child: LineChart(
                 LineChartData(

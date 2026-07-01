@@ -23,7 +23,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   void _refresh() {
-    setState(() => _future = SupabaseService.fetchLoans());
+    setState(() {
+      _future = SupabaseService.fetchLoans();
+    });
   }
 
   Future<void> _openNewLoan() async {
