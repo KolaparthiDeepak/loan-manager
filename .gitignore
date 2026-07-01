@@ -2,6 +2,10 @@
 **/.env
 *.env
 
+# Personal / migrated data (never publish — contains real amounts & password hashes)
+tools/db.json
+tools/sb_dump.json
+
 # Flutter / Dart
 .dart_tool/
 .packages
