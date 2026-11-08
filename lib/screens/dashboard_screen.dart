@@ -1,11 +1,21 @@
-import 'package:flutter/material.dart';
+﻿import 'dart:async';
+import 'dart:ui';
 
-import '../models.dart';
-import '../supabase_service.dart';
-import '../utils.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../loan_store.dart';
+import '../widgets/glass.dart';
 import 'loan_timeline_screen.dart';
 import 'new_loan_screen.dart';
+import 'tabs/home_tab.dart';
+import 'tabs/loans_tab.dart';
+import 'tabs/more_tab.dart';
+import 'tabs/reports_tab.dart';
 
+/// App shell: four tabs behind a floating glass navigation bar with a
+/// centre "+" button to add a loan.
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
@@ -14,240 +24,178 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  late Future<List<Loan>> _future;
+  final _store = LoanStore();
+  int _tab = 0;
+  StreamSubscription<AuthState>? _authSub;
 
   @override
   void initState() {
     super.initState();
-    _future = SupabaseService.fetchLoans();
-  }
-
-  void _refresh() {
-    setState(() {
-      _future = SupabaseService.fetchLoans();
+    _store.refresh();
+    // Re-draw greeting/avatars when the name or email is updated.
+    _authSub = Supabase.instance.client.auth.onAuthStateChange.listen((_) {
+      if (mounted) setState(() {});
     });
   }
 
-  Future<void> _openNewLoan() async {
+  @override
+  void dispose() {
+    _authSub?.cancel();
+    _store.dispose();
+    super.dispose();
+  }
+
+  Future<void> _addLoan() async {
     final created = await Navigator.push<bool>(
       context,
       MaterialPageRoute(builder: (_) => const NewLoanScreen()),
     );
-    if (created == true) _refresh();
+    if (created == true) {
+      await _store.refresh();
+      if (mounted) setState(() => _tab = 1);
+    }
   }
 
-  Future<void> _openTimeline(Loan loan) async {
+  Future<void> _open(LoanSnap s) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => LoanTimelineScreen(loanId: loan.id)),
+      MaterialPageRoute(builder: (_) => LoanTimelineScreen(loanId: s.loan.id)),
     );
-    _refresh(); // re-fetch in case transactions changed
+    _store.refresh(); // transactions may have changed
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('My Loans'),
-        backgroundColor: const Color(0xFF1976d2),
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            tooltip: 'Sign out',
-            icon: const Icon(Icons.logout),
-            onPressed: () => SupabaseService.signOut(),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: (Palette.isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+          .copyWith(statusBarColor: Colors.transparent),
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        extendBody: true,
+        body: GlassBackground(
+          child: SafeArea(
+            bottom: false,
+            child: IndexedStack(
+              index: _tab,
+              children: [
+                HomeTab(
+                    store: _store,
+                    onOpen: _open,
+                    onAdd: _addLoan,
+                    goTab: (i) => setState(() => _tab = i)),
+                LoansTab(store: _store, onOpen: _open, onAdd: _addLoan),
+                ReportsTab(store: _store),
+                MoreTab(store: _store),
+              ],
+            ),
           ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openNewLoan,
-        icon: const Icon(Icons.add),
-        label: const Text('Add Loan'),
-      ),
-      body: RefreshIndicator(
-        onRefresh: () async => _refresh(),
-        child: FutureBuilder<List<Loan>>(
-          future: _future,
-          builder: (context, snap) {
-            if (snap.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snap.hasError) {
-              return _ErrorView(message: '${snap.error}', onRetry: _refresh);
-            }
-            final loans = snap.data ?? [];
-            if (loans.isEmpty) {
-              return ListView(
-                children: const [
-                  SizedBox(height: 160),
-                  Icon(Icons.account_balance_wallet_outlined,
-                      size: 72, color: Colors.grey),
-                  SizedBox(height: 12),
-                  Center(child: Text('No loans yet. Tap "Add Loan".')),
-                ],
-              );
-            }
-            final showSummary = loans.length > 1;
-            return ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: loans.length + (showSummary ? 1 : 0),
-              itemBuilder: (context, i) {
-                if (showSummary && i == 0) {
-                  return _SummaryHeader(loans: loans);
-                }
-                final loan = loans[i - (showSummary ? 1 : 0)];
-                return _LoanCard(
-                  loan: loan,
-                  onTap: () => _openTimeline(loan),
-                );
-              },
-            );
-          },
+        ),
+        bottomNavigationBar: _NavBar(
+          index: _tab,
+          onTap: (i) => setState(() => _tab = i),
+          onAdd: _addLoan,
         ),
       ),
     );
   }
 }
 
-class _SummaryHeader extends StatelessWidget {
-  final List<Loan> loans;
-  const _SummaryHeader({required this.loans});
+class _NavBar extends StatelessWidget {
+  final int index;
+  final ValueChanged<int> onTap;
+  final VoidCallback onAdd;
+  const _NavBar({required this.index, required this.onTap, required this.onAdd});
 
   @override
   Widget build(BuildContext context) {
-    double outstanding = 0, emi = 0, saved = 0, sanctioned = 0;
-    for (final l in loans) {
-      final t = l.timeline();
-      outstanding += t.totalOutstanding;
-      emi += t.monthlyEmi;
-      saved += t.interestSaved;
-      sanctioned += t.sanctionedAmount;
-    }
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-            colors: [Color(0xFF1E88E5), Color(0xFF1565C0)]),
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('${loans.length} loans',
-              style: const TextStyle(color: Colors.white70, fontSize: 13)),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 20,
-            runSpacing: 12,
-            children: [
-              _item('Total Outstanding', inr(outstanding)),
-              _item('Monthly EMI', inr(emi)),
-              _item('Interest Saved', inr(saved)),
-              _item('Total Sanctioned', inr(sanctioned)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _item(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-        Text(value,
-            style: const TextStyle(
-                color: Colors.white, fontSize: 17, fontWeight: FontWeight.bold)),
-      ],
-    );
-  }
-}
-
-class _LoanCard extends StatelessWidget {
-  final Loan loan;
-  final VoidCallback onTap;
-  const _LoanCard({required this.loan, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = loan.timeline();
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 6),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(loan.loanName,
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold)),
-                  ),
-                  Text('${loan.rate}%  •  ${loan.years.toStringAsFixed(0)} yr',
-                      style: const TextStyle(color: Colors.black54)),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 16,
-                runSpacing: 8,
-                children: [
-                  _stat('Sanctioned', inr(loan.sanctionedAmount)),
-                  _stat('Outstanding', inr(t.totalOutstanding)),
-                  _stat('Monthly EMI', inr(t.monthlyEmi)),
-                  if (t.interestSaved > 0)
-                    _stat('Interest Saved', inr(t.interestSaved),
-                        color: const Color(0xFF2e7d32)),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _stat(String label, String value, {Color? color}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-        Text(value,
-            style: TextStyle(
-                fontSize: 16, fontWeight: FontWeight.w600, color: color)),
-      ],
-    );
-  }
-}
-
-class _ErrorView extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-  const _ErrorView({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
+    return SafeArea(
+      top: false,
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(32),
+            boxShadow: [
+              BoxShadow(
+                  color: Palette.navy.withValues(alpha: 0.16),
+                  blurRadius: 28,
+                  offset: const Offset(0, 10)),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(32),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+              child: Container(
+                height: 70,
+                decoration: BoxDecoration(
+                  color: Palette.glass(0.78),
+                  borderRadius: BorderRadius.circular(32),
+                  border: Border.all(color: Palette.glass(0.95), width: 1.2),
+                ),
+                child: Row(
+                  children: [
+                    _item(0, Icons.home_rounded, 'Home'),
+                    _item(1, Icons.account_balance_rounded, 'Loans'),
+                    Expanded(
+                      child: Center(
+                        child: GestureDetector(
+                          onTap: onAdd,
+                          child: Container(
+                            width: 54,
+                            height: 54,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [Palette.blue, Palette.violet],
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                    color: Palette.blue.withValues(alpha: 0.45),
+                                    blurRadius: 16,
+                                    offset: const Offset(0, 7)),
+                              ],
+                            ),
+                            child: const Icon(Icons.add_rounded,
+                                color: Colors.white, size: 30),
+                          ),
+                        ),
+                      ),
+                    ),
+                    _item(2, Icons.bar_chart_rounded, 'Reports'),
+                    _item(3, Icons.grid_view_rounded, 'More'),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _item(int i, IconData icon, String label) {
+    final sel = index == i;
+    return Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: () => onTap(i),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, color: Colors.red, size: 48),
-            const SizedBox(height: 12),
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            FilledButton(onPressed: onRetry, child: const Text('Retry')),
+            Icon(icon, size: 25, color: sel ? Palette.accent : Palette.inkSoft),
+            const SizedBox(height: 3),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: sel ? FontWeight.w900 : FontWeight.w600,
+                    color: sel ? Palette.accent : Palette.inkSoft)),
           ],
         ),
       ),
     );
   }
 }
+

@@ -15,8 +15,7 @@ class AppConfig {
   // Supabase Auth is email-based; the app shows a USERNAME field and maps it to
   // "<username>@<authEmailDomain>" internally. No mail is sent for sign-in, so
   // this domain is just a stable namespace for accounts.
-  static const String authEmailDomain = 'loan.app';
-}
+  static const String authEmailDomain = 'loan.app';}
 
 /// Maps a username to the synthetic email used with Supabase Auth.
 String usernameToEmail(String username) =>

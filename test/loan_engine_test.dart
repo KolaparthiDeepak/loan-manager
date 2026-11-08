@@ -90,4 +90,193 @@ void main() {
     expect(s.last.balance, 0);
     expect(s.last.interest, 497);
   });
+
+  group('bank charges', () {
+    LoanInput mk(List<ChargeInput> charges) => LoanInput(
+          loanName: 't',
+          sanctionedAmount: 1000000,
+          rate: 12,
+          years: 10,
+          startDate: '2025-01-01',
+          emiDay: 5,
+          monthlyEmi: 14347,
+          disbursements: [
+            DisbursementInput(id: 'd1', amount: 1000000, date: '2025-01-01')
+          ],
+          payments: [],
+          charges: charges,
+        );
+
+    test('charge is added to outstanding principal and accrues interest', () {
+      final base = buildTimeline(mk([]), untilDate: DateTime.utc(2025, 1, 31));
+      final v = buildTimeline(
+          mk([ChargeInput(id: 'c1', amount: 5000, date: '2025-01-11', description: 'Fee')]),
+          untilDate: DateTime.utc(2025, 1, 31));
+      expect(v.totalCharges, 5000);
+      expect(v.outstandingPrincipal, 1005000);
+      expect(v.timeline.any((r) => r.eventType == 'CHARGE'), isTrue);
+      // 20 extra days of interest on 5000 @12%
+      expect(v.accruedInterest - base.accruedInterest, closeTo(33, 1));
+    });
+
+    test('no charges leaves results unchanged', () {
+      final v = buildTimeline(mk([]), untilDate: DateTime.utc(2025, 1, 31));
+      expect(v.totalCharges, 0);
+      expect(v.outstandingPrincipal, 1000000);
+    });
+  });
+
+  group('rate change with effective date', () {
+    LoanInput mk(List<RateChangeInput> rcs) => LoanInput(
+          loanName: 't',
+          sanctionedAmount: 1000000,
+          rate: rcs.isEmpty ? 12 : 10,
+          years: 10,
+          startDate: '2025-01-01',
+          emiDay: 5,
+          monthlyEmi: 14347,
+          disbursements: [
+            DisbursementInput(id: 'd1', amount: 1000000, date: '2025-01-01')
+          ],
+          payments: [],
+          rateChanges: rcs,
+        );
+    final rc = RateChangeInput(
+        id: 'r1',
+        effectiveDate: '2025-01-11',
+        oldRate: 12,
+        newRate: 10,
+        oldEmi: 14347,
+        newEmi: 13215,
+        oldYears: 10,
+        newYears: 10,
+        adjustmentType: 'KEEP_TENURE');
+
+    test('interest is split: old rate before the date, new rate from it', () {
+      final v = buildTimeline(mk([rc]), untilDate: DateTime.utc(2025, 1, 31));
+      // 10 days @12% = 3287.67 ; 20 days @10% = 5479.45 ; total 8767.12
+      expect(v.accruedInterest, 8767);
+      final last = v.timeline.last;
+      expect(last.segments.length, 1); // only the post-change slice
+      expect(last.segments.first.rate, 10);
+      expect(last.segments.first.days, 20);
+      final marker = v.timeline.firstWhere((r) => r.eventType == 'RATE_CHANGE');
+      expect(marker.days, 10);
+      expect(marker.periodInterest, 3288);
+      expect(marker.segments.single.rate, 12);
+    });
+
+    test('each period is priced at the rate in force', () {
+      final v = buildTimeline(mk([rc]), untilDate: DateTime.utc(2025, 1, 31));
+      expect(v.accruedInterest, isNot(9863)); // flat 12% would be 9863
+      final pay = mk([rc]).copyWith(payments: [
+        PaymentInput(
+            id: 'p', amount: 14347, date: '2025-01-20', paymentType: 'EMI_PAYMENT')
+      ]);
+      final v2 = buildTimeline(pay, untilDate: DateTime.utc(2025, 1, 20));
+      final emiRow = v2.timeline.firstWhere((r) => r.eventType == 'EMI_PAYMENT');
+      // RATE_CHANGE row already booked 10 days; EMI row covers Jan 11->20 @10%
+      expect(emiRow.segments.single.rate, 10);
+      expect(emiRow.segments.single.days, 9);
+    });
+
+    test('asOf drops later events', () {
+      final in2 = mk([rc]).asOf('2025-01-05');
+      expect(in2.rateChanges, isEmpty);
+    });
+
+    test('projectUpcoming amortises to zero at the given rate', () {
+      final rows = projectUpcoming(
+          outstanding: 1000000,
+          annualRate: 12,
+          emi: 14347,
+          firstDueDate: '2025-02-05');
+      expect(rows.first.interest, 10000);
+      expect(rows.first.dueDate, '2025-02-05');
+      expect(rows.last.closingBalance, 0);
+      expect(rows.length, inInclusiveRange(119, 121));
+    });
+  });
+
+  group('penal charge for a delayed EMI', () {
+    test('Union Bank case: 2% p.a. + 18% GST on a 2-day delay of Rs 82,412', () {
+      final c = computePenalty(
+        overdueAmount: 82412,
+        ratePct: 2,
+        gstPct: 18,
+        delayStart: DateTime.utc(2026, 7, 5),
+        delayEnd: DateTime.utc(2026, 7, 7),
+      );
+      expect(c.days, 2);
+      expect(c.penalty, 9.03);
+      expect(c.gst, 1.63);
+      expect(c.total, 10.66);
+      expect(c.booked, 11);
+    });
+
+    LoanInput mk(List<PenaltyInput> pens, {double emi = 14347, bool withEmi = true}) => LoanInput(
+          loanName: 't',
+          sanctionedAmount: 1000000,
+          rate: 12,
+          years: 10,
+          startDate: '2025-01-01',
+          emiDay: 5,
+          monthlyEmi: 14347,
+          disbursements: [
+            DisbursementInput(id: 'd1', amount: 1000000, date: '2025-01-01')
+          ],
+          payments: withEmi
+              ? [
+                  PaymentInput(
+                      id: 'p1',
+                      amount: emi,
+                      date: '2025-02-05',
+                      paymentType: 'EMI_PAYMENT')
+                ]
+              : [],
+          penalties: pens,
+        );
+    PenaltyInput pen({bool disputed = false}) => PenaltyInput(
+        id: 'x',
+        delayStart: '2025-01-30',
+        delayEnd: '2025-02-01',
+        leviedDate: '2025-02-01',
+        overdueAmount: 14347,
+        ratePct: 2,
+        gstPct: 18,
+        amount: 11,
+        disputed: disputed);
+
+    test('is not capitalised: principal is untouched, total owed includes it', () {
+      final v = buildTimeline(mk([pen()], withEmi: false),
+          untilDate: DateTime.utc(2025, 2, 1));
+      expect(v.totalPenalties, 11);
+      expect(v.penaltyDue, 11);
+      expect(v.outstandingPrincipal, 1000000);
+      expect(v.totalOutstanding,
+          v.outstandingPrincipal + v.accruedInterest + 11);
+    });
+
+    test('the next EMI clears interest, then the penalty, then principal', () {
+      final base = buildTimeline(mk([]), untilDate: DateTime.utc(2025, 2, 5));
+      final v = buildTimeline(mk([pen()]), untilDate: DateTime.utc(2025, 2, 5));
+      final emi = v.timeline.firstWhere((r) => r.eventType == 'EMI_PAYMENT');
+      final emi0 = base.timeline.firstWhere((r) => r.eventType == 'EMI_PAYMENT');
+      expect(emi.penaltyPaid, 11);
+      expect(emi.interestPaid, emi0.interestPaid);
+      expect(emi.principalPaid, emi0.principalPaid - 11);
+      expect(v.penaltyDue, 0);
+      expect(v.totalPenaltyPaid, 11);
+    });
+
+    test('a disputed penalty is listed but changes nothing', () {
+      final base = buildTimeline(mk([]), untilDate: DateTime.utc(2025, 2, 5));
+      final v = buildTimeline(mk([pen(disputed: true)]),
+          untilDate: DateTime.utc(2025, 2, 5));
+      expect(v.timeline.any((r) => r.eventType == 'PENALTY'), isTrue);
+      expect(v.totalPenalties, 0);
+      expect(v.penaltyDue, 0);
+      expect(v.outstandingPrincipal, base.outstandingPrincipal);
+    });
+  });
 }
