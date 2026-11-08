@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../loan_engine.dart';
 import '../models.dart';
 import '../utils.dart';
+import '../widgets/glass.dart';
 
 /// "What if I prepay ₹X today?" — recomputes the loan with a hypothetical extra
 /// prepayment using the SAME engine (buildTimeline) and shows the additional
@@ -39,17 +40,7 @@ class _WhatIfScreenState extends State<WhatIfScreen> {
         date: _today(),
         paymentType: 'PREPAYMENT',
       ));
-    final modified = LoanInput(
-      loanName: base.loanName,
-      sanctionedAmount: base.sanctionedAmount,
-      rate: base.rate,
-      years: base.years,
-      startDate: base.startDate,
-      emiDay: base.emiDay,
-      monthlyEmi: base.monthlyEmi,
-      disbursements: base.disbursements,
-      payments: payments,
-    );
+    final modified = base.copyWith(payments: payments);
     return buildTimeline(modified);
   }
 
@@ -63,116 +54,104 @@ class _WhatIfScreenState extends State<WhatIfScreen> {
     final addlMonths = projected.monthsSaved - current.monthsSaved;
     final newOutstanding = projected.totalOutstanding;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Prepayment What-If'),
-        backgroundColor: const Color(0xFF1976d2),
-        foregroundColor: Colors.white,
-      ),
+    return GlassScaffold(
+      title: 'Prepayment What-If',
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(14, 10, 14, 40),
         children: [
-          Text('If you prepay this amount today (${widget.loan.loanName}):',
-              style: const TextStyle(color: Colors.black54)),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _amount,
-            keyboardType: TextInputType.number,
-            autofocus: true,
-            onChanged: (v) =>
-                setState(() => _amountVal = double.tryParse(v) ?? 0),
-            decoration: const InputDecoration(
-              labelText: 'Prepayment amount (₹)',
-              prefixIcon: Icon(Icons.bolt),
-              border: OutlineInputBorder(),
+          GlassCard(
+            blur: 14,
+            radius: 28,
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('If you prepay this amount today (${widget.loan.loanName}):',
+                    style: TextStyle(color: Palette.inkSoft)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _amount,
+                  keyboardType: TextInputType.number,
+                  autofocus: true,
+                  onChanged: (v) =>
+                      setState(() => _amountVal = double.tryParse(v) ?? 0),
+                  decoration: const InputDecoration(
+                    labelText: 'Prepayment amount (₹)',
+                    prefixIcon: Icon(Icons.bolt_rounded),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [50000, 100000, 200000, 500000]
+                      .map((v) => GlassPill(
+                            icon: Icons.add_rounded,
+                            label: inr(v),
+                            color: Palette.amber,
+                            onTap: () {
+                              _amount.text = v.toString();
+                              setState(() => _amountVal = v.toDouble());
+                            },
+                          ))
+                      .toList(),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: [50000, 100000, 200000, 500000]
-                .map((v) => ActionChip(
-                      label: Text(inr(v)),
-                      onPressed: () {
-                        _amount.text = v.toString();
-                        setState(() => _amountVal = v.toDouble());
-                      },
-                    ))
-                .toList(),
-          ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 14),
           if (extra > 0) ...[
             Row(
               children: [
                 Expanded(
-                  child: _resultCard(
-                    '💰 Extra Interest Saved',
-                    inr(addlInterest),
-                    const [Color(0xFF43A047), Color(0xFF1B5E20)],
+                  child: GradientKpi(
+                    label: 'Extra interest saved',
+                    value: inr(addlInterest),
+                    icon: Icons.savings_rounded,
+                    colors: const [Color(0xFF34D399), Color(0xFF059669)],
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: _resultCard(
-                    '⏱️ Extra Tenure Cut',
-                    '$addlMonths mo',
-                    const [Color(0xFF1E88E5), Color(0xFF0D47A1)],
+                  child: GradientKpi(
+                    label: 'Extra tenure cut',
+                    value: '$addlMonths mo',
+                    icon: Icons.timelapse_rounded,
+                    colors: const [Color(0xFF60A5FA), Color(0xFF4F46E5)],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    _row('Total interest saved (after this prepay)',
-                        inr(projected.interestSaved)),
-                    const Divider(),
-                    _row('Total tenure cut', '${projected.monthsSaved} months'),
-                    const Divider(),
-                    _row('Outstanding right after prepay', inr(newOutstanding)),
-                  ],
-                ),
+            const SizedBox(height: 14),
+            GlassCard(
+              radius: 26,
+              child: Column(
+                children: [
+                  _row('Total interest saved (after this prepay)',
+                      inr(projected.interestSaved)),
+                  const Divider(),
+                  _row('Total tenure cut', '${projected.monthsSaved} months'),
+                  const Divider(),
+                  _row('Outstanding right after prepay', inr(newOutstanding)),
+                ],
               ),
             ),
-            const SizedBox(height: 8),
-            const Text(
-              'Computed with the same interest engine as the rest of the app '
-              '(daily accrual, floating rate). Prepayment goes 100% to principal.',
-              style: TextStyle(fontSize: 12, color: Colors.black54),
+            const SizedBox(height: 10),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6),
+              child: Text(
+                'Computed with the same interest engine as the rest of the app '
+                '(daily accrual, floating rate). Prepayment goes 100% to principal.',
+                style: TextStyle(fontSize: 12, color: Palette.inkSoft),
+              ),
             ),
           ] else
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(top: 24),
               child: Text('Enter an amount to see your savings.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.black54)),
+                  style: TextStyle(color: Palette.inkSoft)),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _resultCard(String label, String value, List<Color> colors) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(colors: colors),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label,
-              style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          const SizedBox(height: 6),
-          Text(value,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold)),
         ],
       ),
     );
@@ -185,7 +164,8 @@ class _WhatIfScreenState extends State<WhatIfScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Flexible(child: Text(label)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+          const SizedBox(width: 12),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w800)),
         ],
       ),
     );

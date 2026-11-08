@@ -10,6 +10,12 @@ String eventLabel(String type) {
   switch (type) {
     case 'DISBURSEMENT':
       return 'Disbursement';
+    case 'PENALTY':
+      return 'Penal Charge';
+    case 'RATE_CHANGE':
+      return 'Rate Change';
+    case 'CHARGE':
+      return 'Bank Charge';
     case 'EMI_PAYMENT':
       return 'EMI Payment';
     case 'PREPAYMENT':

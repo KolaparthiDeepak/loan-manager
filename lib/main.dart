@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'config.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/login_screen.dart';
+import 'theme_controller.dart';
+import 'widgets/glass.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await ThemeController.init();
   await Supabase.initialize(
     url: AppConfig.supabaseUrl,
     anonKey: AppConfig.supabaseAnonKey,
@@ -19,14 +23,20 @@ class LoanApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Loan Manager',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorSchemeSeed: const Color(0xFF1976d2),
-        useMaterial3: true,
-      ),
-      home: const AuthGate(),
+    return ValueListenableBuilder<int>(
+      valueListenable: ThemeController.version,
+      builder: (context, _, __) {
+        SystemChrome.setSystemUIOverlayStyle(
+          (Palette.isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark)
+              .copyWith(statusBarColor: Colors.transparent),
+        );
+        return MaterialApp(
+          title: 'Loan Manager',
+          debugShowCheckedModeBanner: false,
+          theme: buildGlassTheme(),
+          home: const AuthGate(),
+        );
+      },
     );
   }
 }

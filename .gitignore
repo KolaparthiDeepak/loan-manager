@@ -31,3 +31,6 @@ tools/node_modules/
 .idea/
 .vscode/
 *.iml
+
+# Kotlin build cache
+android/.kotlin/

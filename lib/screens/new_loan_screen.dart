@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../loan_engine.dart';
 import '../supabase_service.dart';
 import '../utils.dart';
+import '../widgets/glass.dart';
 
 class NewLoanScreen extends StatefulWidget {
   const NewLoanScreen({super.key});
@@ -77,76 +78,88 @@ class _NewLoanScreenState extends State<NewLoanScreen> {
   @override
   Widget build(BuildContext context) {
     final emi = _previewEmi;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('New Loan'),
-        backgroundColor: const Color(0xFF1976d2),
-        foregroundColor: Colors.white,
-      ),
+    return GlassScaffold(
+      title: 'New Loan',
       body: Form(
         key: _form,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 40),
           children: [
-            _field(_name, 'Loan name', TextInputType.text),
-            _field(_sanctioned, 'Sanctioned amount (₹)', TextInputType.number,
-                onChanged: (_) => setState(() {})),
-            _field(_rate, 'Interest rate (% p.a.)', TextInputType.number,
-                onChanged: (_) => setState(() {})),
-            _field(_years, 'Tenure (years)', TextInputType.number,
-                helper: 'Enter tenure in years',
-                onChanged: (_) => setState(() {})),
-            _field(_emiDay, 'EMI due day (1-28)', TextInputType.number),
-            _field(_firstDisb, 'First disbursement (₹, optional)',
-                TextInputType.number,
-                required: false,
-                helper: 'Defaults to full sanctioned amount'),
-            const SizedBox(height: 8),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Start date'),
-              subtitle: Text(_fmt(_startDate)),
-              trailing: const Icon(Icons.calendar_today),
-              onTap: () async {
-                final picked = await showDatePicker(
-                  context: context,
-                  initialDate: _startDate,
-                  firstDate: DateTime(2000),
-                  lastDate: DateTime(2100),
-                );
-                if (picked != null) setState(() => _startDate = picked);
-              },
-            ),
-            if (emi != null)
-              Card(
-                color: const Color(0xFFE3F2FD),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Calculated monthly EMI'),
-                      Text(inr(emi),
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold, fontSize: 18)),
-                    ],
+            GlassCard(
+              blur: 14,
+              radius: 28,
+              padding: const EdgeInsets.fromLTRB(18, 20, 18, 8),
+              child: Column(
+                children: [
+                  _field(_name, 'Loan name', TextInputType.text,
+                      icon: Icons.label_outline_rounded),
+                  _field(_sanctioned, 'Sanctioned amount (₹)', TextInputType.number,
+                      icon: Icons.currency_rupee_rounded,
+                      onChanged: (_) => setState(() {})),
+                  _field(_rate, 'Interest rate (% p.a.)', TextInputType.number,
+                      icon: Icons.percent_rounded,
+                      onChanged: (_) => setState(() {})),
+                  _field(_years, 'Tenure (years)', TextInputType.number,
+                      icon: Icons.timelapse_rounded,
+                      helper: 'Enter tenure in years',
+                      onChanged: (_) => setState(() {})),
+                  _field(_emiDay, 'EMI due day (1-28)', TextInputType.number,
+                      icon: Icons.event_repeat_rounded),
+                  _field(_firstDisb, 'First disbursement (₹, optional)',
+                      TextInputType.number,
+                      icon: Icons.account_balance_wallet_outlined,
+                      required: false,
+                      helper: 'Defaults to full sanctioned amount'),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: _startDate,
+                          firstDate: DateTime(2000),
+                          lastDate: DateTime(2100),
+                        );
+                        if (picked != null) setState(() => _startDate = picked);
+                      },
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          labelText: 'Start date',
+                          prefixIcon: Icon(Icons.calendar_today_rounded),
+                        ),
+                        child: Text(_fmt(_startDate),
+                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
+            ),
+            if (emi != null) ...[
+              const SizedBox(height: 14),
+              GradientKpi(
+                label: 'Calculated monthly EMI',
+                value: inr(emi),
+                icon: Icons.calculate_rounded,
+                colors: const [Palette.indigo, Palette.violet],
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text(_error!, style: const TextStyle(color: Colors.red)),
+              Text(_error!, style: const TextStyle(color: Palette.rose)),
             ],
             const SizedBox(height: 20),
             FilledButton(
               onPressed: _busy ? null : _save,
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
+                padding: const EdgeInsets.symmetric(vertical: 14),
                 child: _busy
                     ? const SizedBox(
                         height: 20,
                         width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2))
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
                     : const Text('Create loan'),
               ),
             ),
@@ -159,6 +172,7 @@ class _NewLoanScreenState extends State<NewLoanScreen> {
   Widget _field(TextEditingController c, String label, TextInputType type,
       {bool required = true,
       String? helper,
+      IconData? icon,
       void Function(String)? onChanged}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -169,7 +183,7 @@ class _NewLoanScreenState extends State<NewLoanScreen> {
         decoration: InputDecoration(
           labelText: label,
           helperText: helper,
-          border: const OutlineInputBorder(),
+          prefixIcon: icon == null ? null : Icon(icon),
         ),
         validator: (v) {
           if (!required) return null;

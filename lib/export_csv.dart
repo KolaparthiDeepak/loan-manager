@@ -17,7 +17,7 @@ String _esc(Object? v) {
 /// Builds a CSV of the timeline and opens the share sheet (save / email / etc.).
 Future<void> exportTimelineCsv(String loanName, TimelineView view) async {
   final rows = <String>[
-    'Date,Event,Amount,Days,Interest,Principal,Outstanding,Total Owed',
+    'Date,Event,Amount,Days,Rate %,Interest,Principal,Outstanding,Total Owed',
   ];
   for (final r in view.timeline) {
     final interest =
@@ -27,6 +27,7 @@ Future<void> exportTimelineCsv(String loanName, TimelineView view) async {
       eventLabel(r.eventType),
       r.amount == 0 ? '' : r.amount.round(),
       r.days,
+      r.rate,
       interest.round(),
       r.principalPaid == 0 ? '' : r.principalPaid.round(),
       r.outstandingPrincipal.round(),
@@ -35,13 +36,16 @@ Future<void> exportTimelineCsv(String loanName, TimelineView view) async {
   }
   // summary footer
   rows.add('');
-  rows.add('Summary,,,,,,,');
+  rows.add('Summary,,,,,,,,');
   rows.add('Sanctioned,${view.sanctionedAmount.round()}');
   rows.add('Total Disbursed,${view.totalDisbursed.round()}');
   rows.add('Outstanding Principal,${view.outstandingPrincipal.round()}');
   rows.add('Accrued Interest,${view.accruedInterest.round()}');
   rows.add('Total Outstanding,${view.totalOutstanding.round()}');
   rows.add('Total Interest Paid,${view.totalInterestPaid.round()}');
+  rows.add('Total Charges Added,${view.totalCharges.round()}');
+  rows.add('Penal Charges Booked,${view.totalPenalties.round()}');
+  rows.add('Penal Charges Still Due,${view.penaltyDue.round()}');
   rows.add('Total Prepayments,${view.totalPrepayments.round()}');
   rows.add('Interest Saved,${view.interestSaved.round()}');
   rows.add('Months Saved,${view.monthsSaved}');

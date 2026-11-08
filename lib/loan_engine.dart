@@ -114,6 +114,115 @@ class PaymentInput {
   });
 }
 
+/// A fee/charge levied by the bank during the tenure. It is capitalised, i.e.
+/// added to the outstanding principal (and therefore accrues interest).
+class ChargeInput {
+  final String id;
+  final double amount;
+  final String date;
+  final String description;
+  ChargeInput({
+    required this.id,
+    required this.amount,
+    required this.date,
+    this.description = '',
+  });
+}
+
+/// A floating-rate change that is effective from a specific date.
+/// Interest before [effectiveDate] accrues at [oldRate], on/after it at [newRate].
+class RateChangeInput {
+  final String id;
+  final String effectiveDate; // YYYY-MM-DD
+  final double oldRate;
+  final double newRate;
+  final double oldEmi;
+  final double newEmi;
+  final double oldYears;
+  final double newYears;
+  final String adjustmentType; // 'KEEP_EMI' | 'KEEP_TENURE'
+  RateChangeInput({
+    required this.id,
+    required this.effectiveDate,
+    required this.oldRate,
+    required this.newRate,
+    required this.oldEmi,
+    required this.newEmi,
+    required this.oldYears,
+    required this.newYears,
+    required this.adjustmentType,
+  });
+}
+
+/// One slice of an interest accrual period during which a single rate applied.
+/// Exposed so the UI can show the exact working: principal x rate x days / 365.
+class AccrualSegment {
+  final String from;
+  final String to;
+  final int days;
+  final double rate; // annual %
+  final double principal;
+  final double interest; // unrounded
+  AccrualSegment(this.from, this.to, this.days, this.rate, this.principal,
+      this.interest);
+}
+
+/// A penal charge for a delayed EMI: [overdueAmount] x [ratePct] p.a. for the
+/// days between [delayStart] and [delayEnd], plus GST. It is NOT capitalised
+/// (no interest is ever charged on it) and is recovered from the next EMI after
+/// interest. [amount] is the booked figure in whole rupees. A [disputed] penalty
+/// is listed on the ledger but has no effect on any balance.
+class PenaltyInput {
+  final String id;
+  final String delayStart; // first day the EMI was overdue (the due date)
+  final String delayEnd; // day the EMI was finally paid
+  final String leviedDate; // day the bank posted the charge
+  final double overdueAmount;
+  final double ratePct;
+  final double gstPct;
+  final double amount; // booked, whole rupees (penalty + GST)
+  final bool disputed;
+  final String note;
+  PenaltyInput({
+    required this.id,
+    required this.delayStart,
+    required this.delayEnd,
+    required this.leviedDate,
+    required this.overdueAmount,
+    required this.ratePct,
+    required this.gstPct,
+    required this.amount,
+    this.disputed = false,
+    this.note = '',
+  });
+}
+
+/// The arithmetic of a penal charge, kept explicit so the UI can show it.
+class PenaltyCalc {
+  final int days;
+  final double penalty; // overdue x rate x days / 365, to the paisa
+  final double gst; // penalty x gst%, to the paisa
+  final double total; // penalty + gst, to the paisa
+  final double booked; // total rounded to whole rupees (what the ledger books)
+  PenaltyCalc(this.days, this.penalty, this.gst, this.total, this.booked);
+}
+
+double _paise(double v) => (v * 100).round() / 100.0;
+
+PenaltyCalc computePenalty({
+  required double overdueAmount,
+  required double ratePct,
+  required double gstPct,
+  required DateTime delayStart,
+  required DateTime delayEnd,
+}) {
+  final days = dayDiff(delayStart, delayEnd);
+  final penalty = _paise(overdueAmount * (ratePct / 100) * (days / 365));
+  final gst = _paise(penalty * (gstPct / 100));
+  final total = _paise(penalty + gst);
+  return PenaltyCalc(days, penalty, gst, total, round2(total));
+}
+
 class LoanInput {
   final String loanName;
   final double sanctionedAmount;
@@ -124,6 +233,9 @@ class LoanInput {
   final double monthlyEmi;
   final List<DisbursementInput> disbursements;
   final List<PaymentInput> payments;
+  final List<ChargeInput> charges;
+  final List<RateChangeInput> rateChanges;
+  final List<PenaltyInput> penalties;
   LoanInput({
     required this.loanName,
     required this.sanctionedAmount,
@@ -134,17 +246,58 @@ class LoanInput {
     required this.monthlyEmi,
     required this.disbursements,
     required this.payments,
+    this.charges = const [],
+    this.rateChanges = const [],
+    this.penalties = const [],
   });
+
+  LoanInput copyWith({
+    double? rate,
+    List<DisbursementInput>? disbursements,
+    List<PaymentInput>? payments,
+    List<ChargeInput>? charges,
+    List<RateChangeInput>? rateChanges,
+    List<PenaltyInput>? penalties,
+  }) =>
+      LoanInput(
+        loanName: loanName,
+        sanctionedAmount: sanctionedAmount,
+        rate: rate ?? this.rate,
+        years: years,
+        startDate: startDate,
+        emiDay: emiDay,
+        monthlyEmi: monthlyEmi,
+        disbursements: disbursements ?? this.disbursements,
+        payments: payments ?? this.payments,
+        charges: charges ?? this.charges,
+        rateChanges: rateChanges ?? this.rateChanges,
+        penalties: penalties ?? this.penalties,
+      );
+
+  /// The loan as it stood on [date]: only events dated on/before it.
+  /// [rateOverride] sets the starting rate (used when no history exists yet).
+  LoanInput asOf(String date, {double? rateOverride}) => copyWith(
+        rate: rateOverride,
+        disbursements:
+            disbursements.where((e) => e.date.compareTo(date) <= 0).toList(),
+        payments: payments.where((e) => e.date.compareTo(date) <= 0).toList(),
+        charges: charges.where((e) => e.date.compareTo(date) <= 0).toList(),
+        rateChanges:
+            rateChanges.where((e) => e.effectiveDate.compareTo(date) <= 0).toList(),
+        penalties:
+            penalties.where((e) => e.leviedDate.compareTo(date) <= 0).toList(),
+      );
 }
 
 // ---- output model ----------------------------------------------------------
 class TimelineRow {
   final String date;
-  final String eventType; // DISBURSEMENT | EMI_PAYMENT | PREPAYMENT | ACCRUAL
+  final String eventType; // DISBURSEMENT | CHARGE | EMI_PAYMENT | PREPAYMENT | ACCRUAL
   final double amount;
   final int days;
   final double periodInterest;
   final double interestPaid;
+  final double penaltyPaid; // part of an EMI that cleared penal charges
   final double principalPaid;
   final double outstandingPrincipal;
   final double accruedInterest;
@@ -154,7 +307,10 @@ class TimelineRow {
   // For delete support: the DB row this timeline entry came from.
   // null on ACCRUAL rows (synthetic, not deletable).
   final String? transactionId;
-  final String? transactionKind; // 'disbursement' | 'payment'
+  final String? transactionKind; // 'disbursement' | 'payment' | 'charge' | 'rate_change' | 'penalty'
+  // Transparency: the rate(s) used and the exact working for periodInterest.
+  final double rate; // annual % in force at the end of this row's period
+  final List<AccrualSegment> segments;
   TimelineRow({
     required this.date,
     required this.eventType,
@@ -162,6 +318,7 @@ class TimelineRow {
     required this.days,
     required this.periodInterest,
     this.interestPaid = 0,
+    this.penaltyPaid = 0,
     this.principalPaid = 0,
     required this.outstandingPrincipal,
     required this.accruedInterest,
@@ -170,6 +327,8 @@ class TimelineRow {
     this.note,
     this.transactionId,
     this.transactionKind,
+    this.rate = 0,
+    this.segments = const [],
   });
 }
 
@@ -186,6 +345,10 @@ class TimelineView {
   final double accruedInterest;
   final double totalOutstanding;
   final double totalPrepayments;
+  final double totalCharges;
+  final double totalPenalties; // booked, excluding disputed
+  final double penaltyDue; // booked but not yet recovered by an EMI
+  final double totalPenaltyPaid;
   final double interestSaved;
   final double originalTotalInterest;
   final int monthsSaved;
@@ -203,6 +366,10 @@ class TimelineView {
     required this.accruedInterest,
     required this.totalOutstanding,
     required this.totalPrepayments,
+    this.totalCharges = 0,
+    this.totalPenalties = 0,
+    this.penaltyDue = 0,
+    this.totalPenaltyPaid = 0,
     required this.interestSaved,
     required this.originalTotalInterest,
     required this.monthsSaved,
@@ -211,15 +378,33 @@ class TimelineView {
 }
 
 class _Event {
-  final String type; // DISBURSEMENT | PREPAYMENT | EMI_PAYMENT
+  final String type; // DISBURSEMENT | CHARGE | PREPAYMENT | EMI_PAYMENT
   final String date;
   final double amount;
   final int? sourceMonth;
   final int seq; // insertion order tiebreaker -> matches V8 stable sort
   final String txId;
-  final String txKind; // 'disbursement' | 'payment'
+  final String txKind; // 'disbursement' | 'payment' | 'charge'
+  final String? note;
+  final RateChangeInput? rc;
+  final PenaltyInput? pen;
   _Event(this.type, this.date, this.amount, this.sourceMonth, this.seq,
-      this.txId, this.txKind);
+      this.txId, this.txKind,
+      {this.note, this.rc, this.pen});
+}
+
+int _rank(String type) {
+  switch (type) {
+    case 'RATE_CHANGE':
+      return 0;
+    case 'DISBURSEMENT':
+      return 1;
+    case 'CHARGE':
+    case 'PENALTY':
+      return 2;
+    default:
+      return 3;
+  }
 }
 
 double _min(double a, double b) => a < b ? a : b;
@@ -229,7 +414,6 @@ double _max(double a, double b) => a > b ? a : b;
 TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
   final startDateStr = loan.startDate;
   final startDate = parseDate(startDateStr)!;
-  final annualRate = loan.rate / 100;
 
   var seq = 0;
   final events = <_Event>[];
@@ -243,18 +427,83 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
         _Event(type, p.date, p.amount, p.sourceMonth, seq++, p.id, 'payment'));
   }
 
-  events.removeWhere((e) => e.date.isEmpty || e.amount <= 0);
+  for (final c in loan.charges) {
+    events.add(_Event('CHARGE', c.date, c.amount, null, seq++, c.id, 'charge',
+        note: c.description));
+  }
+  for (final rc in loan.rateChanges) {
+    events.add(_Event('RATE_CHANGE', rc.effectiveDate, 0, null, seq++, rc.id,
+        'rate_change',
+        rc: rc));
+  }
+
+  for (final pn in loan.penalties) {
+    events.add(_Event('PENALTY', pn.leviedDate, pn.amount, null, seq++, pn.id,
+        'penalty',
+        pen: pn));
+  }
+
+  events.removeWhere(
+      (e) => e.date.isEmpty || (e.type != 'RATE_CHANGE' && e.amount <= 0));
   events.sort((a, b) {
     if (a.date.compareTo(b.date) < 0) return -1;
     if (a.date.compareTo(b.date) > 0) return 1;
     if (a.type == b.type) return a.seq.compareTo(b.seq);
-    return a.type == 'DISBURSEMENT' ? -1 : 1;
+    return _rank(a.type).compareTo(_rank(b.type));
   });
+
+  // ---- rate history: rate in force on any date -----------------------------
+  final changes = List<RateChangeInput>.from(loan.rateChanges)
+    ..sort((a, b) => a.effectiveDate.compareTo(b.effectiveDate));
+  final initialRate = changes.isEmpty ? loan.rate : changes.first.oldRate;
+  double rateAt(DateTime d) {
+    var r = initialRate;
+    for (final c in changes) {
+      if (parseDate(c.effectiveDate)!.millisecondsSinceEpoch <=
+          d.millisecondsSinceEpoch) {
+        r = c.newRate;
+      }
+    }
+    return r;
+  }
+
+  /// Splits [from, to) at every rate-change date and prices each slice with
+  /// the rate that was in force: principal x (rate/100) x (days/365).
+  List<AccrualSegment> accrue(double principal, DateTime from, DateTime to) {
+    final segs = <AccrualSegment>[];
+    final fromMs = from.millisecondsSinceEpoch;
+    final toMs = to.millisecondsSinceEpoch;
+    if (toMs <= fromMs) return segs;
+    final cuts = <DateTime>[from];
+    for (final c in changes) {
+      final d = parseDate(c.effectiveDate)!;
+      if (d.millisecondsSinceEpoch > fromMs && d.millisecondsSinceEpoch < toMs) {
+        cuts.add(d);
+      }
+    }
+    cuts.add(to);
+    for (var i = 0; i < cuts.length - 1; i++) {
+      final a = cuts[i];
+      final b = cuts[i + 1];
+      final days = dayDiff(a, b);
+      final r = rateAt(a);
+      segs.add(AccrualSegment(toDateString(a), toDateString(b), days, r,
+          principal, principal * (r / 100) * (days / 365)));
+    }
+    return segs;
+  }
+
+  double sumInterest(List<AccrualSegment> segs) =>
+      segs.fold<double>(0, (t, x) => t + x.interest);
 
   final timeline = <TimelineRow>[];
   var outstandingPrincipal = 0.0;
   var accruedInterest = 0.0;
   var totalDisbursed = 0.0;
+  var totalCharges = 0.0;
+  var penaltyDue = 0.0;
+  var totalPenalties = 0.0;
+  var totalPenaltyPaid = 0.0;
   var totalInterestPaid = 0.0;
   var totalPrincipalPaid = 0.0;
   var cursorDate = startDate;
@@ -263,8 +512,9 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
     final eventDate = parseDate(event.date);
     if (eventDate == null) continue;
     final days = dayDiff(cursorDate, eventDate);
-    final periodInterest =
-        round2(outstandingPrincipal * annualRate * (days / 365));
+    final segs = accrue(outstandingPrincipal, cursorDate, eventDate);
+    final periodInterest = round2(sumInterest(segs));
+    final rate = rateAt(eventDate);
     accruedInterest = round2(accruedInterest + periodInterest);
 
     double interestPaid = 0;
@@ -279,9 +529,93 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
         amount: round2(event.amount),
         days: days,
         periodInterest: periodInterest,
+        segments: segs,
+        rate: rate,
         outstandingPrincipal: outstandingPrincipal,
         accruedInterest: accruedInterest,
-        totalOutstanding: round2(outstandingPrincipal + accruedInterest),
+        totalOutstanding: round2(outstandingPrincipal + accruedInterest + penaltyDue),
+        transactionId: event.txId,
+        transactionKind: event.txKind,
+      ));
+    } else if (event.type == 'CHARGE') {
+      // Bank charge: capitalised into the outstanding principal.
+      outstandingPrincipal = round2(outstandingPrincipal + event.amount);
+      totalCharges = round2(totalCharges + event.amount);
+      timeline.add(TimelineRow(
+        date: event.date,
+        eventType: 'CHARGE',
+        amount: round2(event.amount),
+        days: days,
+        periodInterest: periodInterest,
+        segments: segs,
+        rate: rate,
+        outstandingPrincipal: outstandingPrincipal,
+        accruedInterest: accruedInterest,
+        totalOutstanding: round2(outstandingPrincipal + accruedInterest + penaltyDue),
+        note: (event.note == null || event.note!.isEmpty)
+            ? 'Bank charge — added to principal'
+            : '${event.note} — added to principal',
+        transactionId: event.txId,
+        transactionKind: event.txKind,
+      ));
+    } else if (event.type == 'RATE_CHANGE') {
+      final rc = event.rc!;
+      String yr(double v) => v == v.roundToDouble() ? '${v.toInt()}' : '$v';
+      final emiTxt = rc.newEmi.round() != rc.oldEmi.round()
+          ? 'EMI ₹${rc.oldEmi.round()} → ₹${rc.newEmi.round()}'
+          : 'EMI ₹${rc.newEmi.round()} (unchanged)';
+      final yrTxt = rc.newYears != rc.oldYears
+          ? 'tenure ${yr(rc.oldYears)} → ${yr(rc.newYears)} yr'
+          : 'tenure ${yr(rc.newYears)} yr (unchanged)';
+      timeline.add(TimelineRow(
+        date: event.date,
+        eventType: 'RATE_CHANGE',
+        amount: 0,
+        days: days,
+        periodInterest: periodInterest,
+        segments: segs,
+        rate: rc.newRate,
+        outstandingPrincipal: outstandingPrincipal,
+        accruedInterest: accruedInterest,
+        totalOutstanding: round2(outstandingPrincipal + accruedInterest + penaltyDue),
+        note: 'Rate ${rc.oldRate}% → ${rc.newRate}% effective ${rc.effectiveDate}. '
+            'Interest up to this date used ${rc.oldRate}%; from this date ${rc.newRate}%. '
+            '$emiTxt, $yrTxt '
+            '(${rc.adjustmentType == 'KEEP_EMI' ? 'EMI kept' : 'tenure kept'}).',
+        transactionId: event.txId,
+        transactionKind: event.txKind,
+      ));
+    } else if (event.type == 'PENALTY') {
+      final pn = event.pen!;
+      if (!pn.disputed) {
+        penaltyDue = round2(penaltyDue + pn.amount);
+        totalPenalties = round2(totalPenalties + pn.amount);
+      }
+      final c = computePenalty(
+        overdueAmount: pn.overdueAmount,
+        ratePct: pn.ratePct,
+        gstPct: pn.gstPct,
+        delayStart: parseDate(pn.delayStart) ?? eventDate,
+        delayEnd: parseDate(pn.delayEnd) ?? eventDate,
+      );
+      final working = '\u20b9${pn.overdueAmount.round()} \u00d7 ${pn.ratePct}% \u00d7 ${c.days}/365 '
+          '= \u20b9${c.penalty.toStringAsFixed(2)}, + GST ${pn.gstPct}% '
+          '\u20b9${c.gst.toStringAsFixed(2)} = \u20b9${c.total.toStringAsFixed(2)}';
+      timeline.add(TimelineRow(
+        date: event.date,
+        eventType: 'PENALTY',
+        amount: round2(pn.amount),
+        days: days,
+        periodInterest: periodInterest,
+        segments: segs,
+        rate: rate,
+        outstandingPrincipal: outstandingPrincipal,
+        accruedInterest: accruedInterest,
+        totalOutstanding: round2(outstandingPrincipal + accruedInterest + penaltyDue),
+        note: pn.disputed
+            ? 'DISPUTED penal charge, no effect on balances. Delay ${pn.delayStart} to ${pn.delayEnd}: $working.'
+            : 'Penal charge for delay ${pn.delayStart} to ${pn.delayEnd}: $working. '
+                'Not capitalised: no interest is charged on it; the next EMI clears it after interest.',
         transactionId: event.txId,
         transactionKind: event.txKind,
       ));
@@ -293,9 +627,11 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
           amount: 0,
           days: days,
           periodInterest: periodInterest,
+          segments: segs,
+          rate: rate,
           outstandingPrincipal: outstandingPrincipal,
           accruedInterest: accruedInterest,
-          totalOutstanding: round2(outstandingPrincipal + accruedInterest),
+          totalOutstanding: round2(outstandingPrincipal + accruedInterest + penaltyDue),
           note:
               'Interest accrued up to prepayment date — will be collected in next EMI',
         ));
@@ -309,10 +645,11 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
         amount: round2(event.amount),
         days: 0,
         periodInterest: 0,
+        rate: rate,
         principalPaid: principalPaid,
         outstandingPrincipal: outstandingPrincipal,
         accruedInterest: accruedInterest,
-        totalOutstanding: round2(outstandingPrincipal + accruedInterest),
+        totalOutstanding: round2(outstandingPrincipal + accruedInterest + penaltyDue),
         sourceMonth: event.sourceMonth,
         note:
             'Floating-rate prepayment — 100% principal reduction, no interest/penalty',
@@ -321,8 +658,13 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
       ));
     } else {
       interestPaid = round2(_min(event.amount, accruedInterest));
-      principalPaid = round2(
-          _min(outstandingPrincipal, _max(0, event.amount - interestPaid)));
+      // Order of recovery: interest first, then any penal charge, then principal.
+      final penaltyPaid =
+          round2(_min(penaltyDue, _max(0, event.amount - interestPaid)));
+      principalPaid = round2(_min(outstandingPrincipal,
+          _max(0, event.amount - interestPaid - penaltyPaid)));
+      penaltyDue = round2(_max(0, penaltyDue - penaltyPaid));
+      totalPenaltyPaid = round2(totalPenaltyPaid + penaltyPaid);
       accruedInterest = round2(_max(0, accruedInterest - interestPaid));
       outstandingPrincipal = round2(_max(0, outstandingPrincipal - principalPaid));
       totalInterestPaid = round2(totalInterestPaid + interestPaid);
@@ -333,11 +675,14 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
         amount: round2(event.amount),
         days: days,
         periodInterest: periodInterest,
+        segments: segs,
+        rate: rate,
         interestPaid: interestPaid,
+        penaltyPaid: penaltyPaid,
         principalPaid: principalPaid,
         outstandingPrincipal: outstandingPrincipal,
         accruedInterest: accruedInterest,
-        totalOutstanding: round2(outstandingPrincipal + accruedInterest),
+        totalOutstanding: round2(outstandingPrincipal + accruedInterest + penaltyDue),
         sourceMonth: event.sourceMonth,
         transactionId: event.txId,
         transactionKind: event.txKind,
@@ -352,8 +697,9 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
   if (untilParsed != null &&
       untilParsed.millisecondsSinceEpoch > cursorDate.millisecondsSinceEpoch) {
     final days = dayDiff(cursorDate, untilParsed);
-    final periodInterest =
-        round2(outstandingPrincipal * annualRate * (days / 365));
+    final segs = accrue(outstandingPrincipal, cursorDate, untilParsed);
+    final periodInterest = round2(sumInterest(segs));
+    final rate = rateAt(untilParsed);
     accruedInterest = round2(accruedInterest + periodInterest);
     timeline.add(TimelineRow(
       date: untilDateStr,
@@ -361,9 +707,11 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
       amount: 0,
       days: days,
       periodInterest: periodInterest,
+      segments: segs,
+      rate: rate,
       outstandingPrincipal: outstandingPrincipal,
       accruedInterest: accruedInterest,
-      totalOutstanding: round2(outstandingPrincipal + accruedInterest),
+      totalOutstanding: round2(outstandingPrincipal + accruedInterest + penaltyDue),
     ));
   }
 
@@ -376,30 +724,59 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
       .fold<double>(0, (s, p) => s + p.amount);
 
   // ---- interest-saved simulation (identical to web app) --------------------
-  final tenure = (loan.years * 12).toInt();
-  final monthlyEmi = round2(loan.monthlyEmi);
-  final monthlyRate = loan.rate / (12 * 100);
+  // With rate history, the plan STARTED at the first change's old rate/EMI/tenure.
+  final tenure =
+      ((changes.isEmpty ? loan.years : changes.first.oldYears) * 12).toInt();
+  final monthlyEmi =
+      round2(changes.isEmpty ? loan.monthlyEmi : changes.first.oldEmi);
+  final monthlyRate = initialRate / (12 * 100);
   final loanPrincipal = sanctionedAmount;
 
   final prepaymentsByMonth = <int, double>{};
   var emiCount = 0;
-  final allPayments = List<PaymentInput>.from(loan.payments)
-    ..sort((a, b) =>
-        parseDate(a.date)!.compareTo(parseDate(b.date)!));
-  for (final p in allPayments) {
-    if (p.paymentType == 'EMI_PAYMENT') {
+  final chargesByMonth = <int, double>{};
+  // Payments and charges walked in date order so each lands in the right month.
+  final rateEmiByMonth = <int, List<double>>{}; // month -> [monthlyRate, emi]
+  final simEvents = <List<dynamic>>[]; // [date, kind, amount, seq]
+  var sq = 0;
+  for (final p in loan.payments) {
+    simEvents.add([p.date, p.paymentType, p.amount, sq++]);
+  }
+  for (final c in loan.charges) {
+    if (c.amount > 0) simEvents.add([c.date, 'CHARGE', c.amount, sq++]);
+  }
+  for (final c in changes) {
+    simEvents.add([c.effectiveDate, 'RATE', 0.0, sq++, c]);
+  }
+  simEvents.sort((a, b) {
+    final d = parseDate(a[0] as String)!.compareTo(parseDate(b[0] as String)!);
+    return d != 0 ? d : (a[3] as int).compareTo(b[3] as int);
+  });
+  for (final e in simEvents) {
+    if (e[1] == 'RATE') {
+      final c = e[4] as RateChangeInput;
+      rateEmiByMonth[emiCount + 1] = [c.newRate / (12 * 100), c.newEmi];
+      continue;
+    }
+    final kind = e[1] as String;
+    final amt = e[2] as double;
+    if (kind == 'EMI_PAYMENT') {
       emiCount++;
-    } else if (p.paymentType == 'PREPAYMENT') {
+    } else if (kind == 'PREPAYMENT') {
       final month = emiCount + 1;
-      prepaymentsByMonth[month] = (prepaymentsByMonth[month] ?? 0) + p.amount;
+      prepaymentsByMonth[month] = (prepaymentsByMonth[month] ?? 0) + amt;
+    } else if (kind == 'CHARGE') {
+      final month = emiCount + 1;
+      chargesByMonth[month] = (chargesByMonth[month] ?? 0) + amt;
     }
   }
 
-  final withoutPrepay =
-      _simulateLoan(loanPrincipal, monthlyEmi, monthlyRate, tenure, {});
+  final withoutPrepay = _simulateLoan(
+      loanPrincipal, monthlyEmi, monthlyRate, tenure, {}, chargesByMonth,
+      rateEmiByMonth);
   final originalTotalInterest = withoutPrepay.totalInterest;
-  final withPrepay = _simulateLoan(
-      loanPrincipal, monthlyEmi, monthlyRate, tenure, prepaymentsByMonth);
+  final withPrepay = _simulateLoan(loanPrincipal, monthlyEmi, monthlyRate,
+      tenure, prepaymentsByMonth, chargesByMonth, rateEmiByMonth);
   final interestSaved =
       round2(_max(0, originalTotalInterest - withPrepay.totalInterest));
   final monthsSaved = withoutPrepay.months - withPrepay.months;
@@ -415,8 +792,12 @@ TimelineView buildTimeline(LoanInput loan, {DateTime? untilDate}) {
     totalPrincipalPaid: totalPrincipalPaid,
     outstandingPrincipal: outstandingPrincipal,
     accruedInterest: accruedInterest,
-    totalOutstanding: round2(outstandingPrincipal + accruedInterest),
+    totalOutstanding: round2(outstandingPrincipal + accruedInterest + penaltyDue),
     totalPrepayments: round2(totalPrepayments),
+    totalCharges: totalCharges,
+    totalPenalties: totalPenalties,
+    penaltyDue: penaltyDue,
+    totalPenaltyPaid: totalPenaltyPaid,
     interestSaved: interestSaved,
     originalTotalInterest: originalTotalInterest,
     monthsSaved: monthsSaved,
@@ -431,15 +812,24 @@ class _SimResult {
 }
 
 _SimResult _simulateLoan(double principal, double emi, double rate,
-    int maxMonths, Map<int, double> prepayments) {
+    int maxMonths, Map<int, double> prepayments,
+    [Map<int, double> charges = const {},
+    Map<int, List<double>> rateEmi = const {}]) {
   var balance = principal;
+  var curRate = rate;
+  var curEmi = emi;
   var totalInterest = 0.0;
   var month = 1;
   while (balance > 0.01 && month <= maxMonths + 100) {
-    final interest = balance * rate;
-    var principalPaid = emi - interest;
+    final change = rateEmi[month];
+    if (change != null) {
+      curRate = change[0];
+      curEmi = change[1];
+    }
+    final interest = balance * curRate;
+    var principalPaid = curEmi - interest;
     final prepay = prepayments[month] ?? 0;
-    var closing = balance - principalPaid - prepay;
+    var closing = balance - principalPaid - prepay + (charges[month] ?? 0);
     if (closing < 0) {
       principalPaid += closing;
       closing = 0;
@@ -504,4 +894,48 @@ RateChangeResult applyRateChange({
     final newEmi = round2(calculateEmi(sanctionedAmount, newRate, currentYears));
     return RateChangeResult(newRate, currentYears, newEmi);
   }
+}
+
+
+// ---- upcoming schedule (projection from the loan's CURRENT position) --------
+class UpcomingRow {
+  final int n;
+  final String dueDate;
+  final double openingBalance;
+  final double interest; // openingBalance x rate / 12
+  final double principal;
+  final double emi;
+  final double closingBalance;
+  UpcomingRow(this.n, this.dueDate, this.openingBalance, this.interest,
+      this.principal, this.emi, this.closingBalance);
+}
+
+/// Projects the remaining EMIs from today's outstanding principal at the
+/// CURRENT rate and EMI: interest = balance x annualRate / 12 each month.
+/// Returns empty if the EMI cannot even cover the interest.
+List<UpcomingRow> projectUpcoming({
+  required double outstanding,
+  required double annualRate,
+  required double emi,
+  required String firstDueDate,
+  int maxMonths = 600,
+}) {
+  final rows = <UpcomingRow>[];
+  final r = annualRate / (12 * 100);
+  var balance = outstanding;
+  if (balance <= 0 || emi <= balance * r) return rows;
+  final first = parseDate(firstDueDate)!;
+  var n = 0;
+  while (balance > 0.5 && n < maxMonths) {
+    final interest = round2(balance * r);
+    final pay = _min(emi, balance + interest);
+    final principal = round2(pay - interest);
+    final closing = round2(_max(0, balance - principal));
+    final due = DateTime.utc(first.year, first.month + n, first.day);
+    rows.add(UpcomingRow(
+        n + 1, toDateString(due), balance, interest, principal, round2(pay), closing));
+    balance = closing;
+    n++;
+  }
+  return rows;
 }
